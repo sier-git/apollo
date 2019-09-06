@@ -23,6 +23,7 @@
 
 #include "modules/map/proto/map_lane.pb.h"
 
+#include "modules/common/configs/vehicle_config_helper.h"
 #include "modules/common/vehicle_state/vehicle_state_provider.h"
 #include "modules/map/pnc_map/path.h"
 #include "modules/planning/common/planning_context.h"
@@ -38,6 +39,7 @@
 #include "modules/planning/scenarios/traffic_light/unprotected_left_turn/traffic_light_unprotected_left_turn_scenario.h"
 #include "modules/planning/scenarios/traffic_light/unprotected_right_turn/traffic_light_unprotected_right_turn_scenario.h"
 #include "modules/planning/scenarios/util/util.h"
+#include "modules/planning/scenarios/yield_sign/yield_sign_scenario.h"
 
 namespace apollo {
 namespace planning {
@@ -47,11 +49,9 @@ using apollo::common::VehicleState;
 using apollo::hdmap::HDMapUtil;
 using apollo::hdmap::PathOverlap;
 
-bool ScenarioManager::Init(
-    const std::set<ScenarioConfig::ScenarioType>& supported_scenarios) {
+bool ScenarioManager::Init() {
   RegisterScenarios();
   default_scenario_type_ = ScenarioConfig::LANE_FOLLOW;
-  supported_scenarios_ = supported_scenarios;
   current_scenario_ = CreateScenario(default_scenario_type_);
   return true;
 }
@@ -98,6 +98,10 @@ std::unique_ptr<Scenario> ScenarioManager::CreateScenario(
       break;
     case ScenarioConfig::VALET_PARKING:
       ptr.reset(new scenario::valet_parking::ValetParkingScenario(
+          config_map_[scenario_type], &scenario_context_));
+      break;
+    case ScenarioConfig::YIELD_SIGN:
+      ptr.reset(new scenario::yield_sign::YieldSignScenario(
           config_map_[scenario_type], &scenario_context_));
       break;
     default:
@@ -147,6 +151,10 @@ void ScenarioManager::RegisterScenarios() {
   // valet parking
   CHECK(Scenario::LoadConfig(FLAGS_scenario_valet_parking_config_file,
                              &config_map_[ScenarioConfig::VALET_PARKING]));
+
+  // yield_sign
+  CHECK(Scenario::LoadConfig(FLAGS_scenario_yield_sign_config_file,
+                             &config_map_[ScenarioConfig::YIELD_SIGN]));
 }
 
 ScenarioConfig::ScenarioType ScenarioManager::SelectChangeLaneScenario(
@@ -198,7 +206,7 @@ ScenarioConfig::ScenarioType ScenarioManager::SelectPullOverScenario(
 
   // check around junction
   if (pull_over_scenario) {
-    constexpr double kDisanceToAvoidJunction = 8.0;  // meter
+    constexpr double kDistanceToAvoidJunction = 8.0;  // meter
     for (const auto& overlap : first_encountered_overlap_map_) {
       if (overlap.first == ReferenceLineInfo::PNC_JUNCTION ||
           overlap.first == ReferenceLineInfo::SIGNAL ||
@@ -206,9 +214,9 @@ ScenarioConfig::ScenarioType ScenarioManager::SelectPullOverScenario(
           overlap.first == ReferenceLineInfo::YIELD_SIGN) {
         const double distance_to = overlap.second.start_s - dest_sl.s();
         const double distance_passed = dest_sl.s() - overlap.second.end_s;
-        if ((distance_to > 0.0 && distance_to < kDisanceToAvoidJunction) ||
+        if ((distance_to > 0.0 && distance_to < kDistanceToAvoidJunction) ||
             (distance_passed > 0.0 &&
-             distance_passed < kDisanceToAvoidJunction)) {
+             distance_passed < kDistanceToAvoidJunction)) {
           pull_over_scenario = false;
           break;
         }
@@ -277,7 +285,7 @@ ScenarioConfig::ScenarioType ScenarioManager::SelectPullOverScenario(
     case ScenarioConfig::TRAFFIC_LIGHT_UNPROTECTED_LEFT_TURN:
     case ScenarioConfig::TRAFFIC_LIGHT_UNPROTECTED_RIGHT_TURN:
     case ScenarioConfig::VALET_PARKING:
-    case ScenarioConfig::YIELD_SIGN_UNPROTECTED:
+    case ScenarioConfig::YIELD_SIGN:
       if (current_scenario_->GetStatus() !=
           Scenario::ScenarioStatus::STATUS_DONE) {
         return current_scenario_->scenario_type();
@@ -326,7 +334,7 @@ ScenarioConfig::ScenarioType ScenarioManager::SelectStopSignScenario(
     case ScenarioConfig::TRAFFIC_LIGHT_PROTECTED:
     case ScenarioConfig::TRAFFIC_LIGHT_UNPROTECTED_LEFT_TURN:
     case ScenarioConfig::TRAFFIC_LIGHT_UNPROTECTED_RIGHT_TURN:
-    case ScenarioConfig::YIELD_SIGN_UNPROTECTED:
+    case ScenarioConfig::YIELD_SIGN:
     case ScenarioConfig::VALET_PARKING:
       if (current_scenario_->GetStatus() !=
           Scenario::ScenarioStatus::STATUS_DONE) {
@@ -342,6 +350,7 @@ ScenarioConfig::ScenarioType ScenarioManager::SelectStopSignScenario(
 
 ScenarioConfig::ScenarioType ScenarioManager::SelectTrafficLightScenario(
     const Frame& frame, const hdmap::PathOverlap& traffic_light_overlap) {
+  // scenario conf is the same across all traffic-light scenarios
   const auto& scenario_config =
       config_map_[ScenarioConfig::TRAFFIC_LIGHT_PROTECTED]
           .traffic_light_unprotected_right_turn_config();
@@ -420,9 +429,7 @@ ScenarioConfig::ScenarioType ScenarioManager::SelectTrafficLightScenario(
           return ScenarioConfig::TRAFFIC_LIGHT_UNPROTECTED_RIGHT_TURN;
         }
         if (left_turn) {
-          // TODO(all): switch when ready
-          // return ScenarioConfig::TRAFFIC_LIGHT_UNPROTECTED_LEFT_TURN;
-          return ScenarioConfig::TRAFFIC_LIGHT_PROTECTED;
+          return ScenarioConfig::TRAFFIC_LIGHT_UNPROTECTED_LEFT_TURN;
         }
 
         return ScenarioConfig::TRAFFIC_LIGHT_PROTECTED;
@@ -434,7 +441,7 @@ ScenarioConfig::ScenarioType ScenarioManager::SelectTrafficLightScenario(
     case ScenarioConfig::TRAFFIC_LIGHT_PROTECTED:
     case ScenarioConfig::TRAFFIC_LIGHT_UNPROTECTED_LEFT_TURN:
     case ScenarioConfig::TRAFFIC_LIGHT_UNPROTECTED_RIGHT_TURN:
-    case ScenarioConfig::YIELD_SIGN_UNPROTECTED:
+    case ScenarioConfig::YIELD_SIGN:
     case ScenarioConfig::VALET_PARKING:
       if (current_scenario_->GetStatus() !=
           Scenario::ScenarioStatus::STATUS_DONE) {
@@ -451,8 +458,50 @@ ScenarioConfig::ScenarioType ScenarioManager::SelectTrafficLightScenario(
 
 ScenarioConfig::ScenarioType ScenarioManager::SelectYieldSignScenario(
     const Frame& frame, const hdmap::PathOverlap& yield_sign_overlap) {
-  // TODO(all)
-  return current_scenario_->scenario_type();
+  const auto& scenario_config =
+      config_map_[ScenarioConfig::YIELD_SIGN].yield_sign_config();
+
+  const auto& reference_line_info = frame.reference_line_info().front();
+  const double adc_front_edge_s = reference_line_info.AdcSlBoundary().end_s();
+  const double adc_distance_to_yield_sign =
+      yield_sign_overlap.start_s - adc_front_edge_s;
+  ADEBUG << "adc_distance_to_yield_sign[" << adc_distance_to_yield_sign
+         << "] yield_sign[" << yield_sign_overlap.object_id
+         << "] yield_sign_overlap_start_s[" << yield_sign_overlap.start_s
+         << "]";
+
+  const bool yield_sign_scenario =
+      (adc_distance_to_yield_sign > 0.0 &&
+       adc_distance_to_yield_sign <=
+           scenario_config.start_yield_sign_scenario_distance());
+
+  switch (current_scenario_->scenario_type()) {
+    case ScenarioConfig::LANE_FOLLOW:
+    case ScenarioConfig::CHANGE_LANE:
+    case ScenarioConfig::PARK_AND_GO:
+    case ScenarioConfig::PULL_OVER:
+      if (yield_sign_scenario) {
+        return ScenarioConfig::YIELD_SIGN;
+      }
+      break;
+    case ScenarioConfig::BARE_INTERSECTION_UNPROTECTED:
+    case ScenarioConfig::STOP_SIGN_PROTECTED:
+    case ScenarioConfig::STOP_SIGN_UNPROTECTED:
+    case ScenarioConfig::TRAFFIC_LIGHT_PROTECTED:
+    case ScenarioConfig::TRAFFIC_LIGHT_UNPROTECTED_LEFT_TURN:
+    case ScenarioConfig::TRAFFIC_LIGHT_UNPROTECTED_RIGHT_TURN:
+    case ScenarioConfig::YIELD_SIGN:
+    case ScenarioConfig::VALET_PARKING:
+      if (current_scenario_->GetStatus() !=
+          Scenario::ScenarioStatus::STATUS_DONE) {
+        return current_scenario_->scenario_type();
+      }
+      break;
+    default:
+      break;
+  }
+
+  return default_scenario_type_;
 }
 
 ScenarioConfig::ScenarioType ScenarioManager::SelectBareIntersectionScenario(
@@ -495,7 +544,7 @@ ScenarioConfig::ScenarioType ScenarioManager::SelectBareIntersectionScenario(
     case ScenarioConfig::TRAFFIC_LIGHT_PROTECTED:
     case ScenarioConfig::TRAFFIC_LIGHT_UNPROTECTED_LEFT_TURN:
     case ScenarioConfig::TRAFFIC_LIGHT_UNPROTECTED_RIGHT_TURN:
-    case ScenarioConfig::YIELD_SIGN_UNPROTECTED:
+    case ScenarioConfig::YIELD_SIGN:
     case ScenarioConfig::VALET_PARKING:
       if (current_scenario_->GetStatus() !=
           Scenario::ScenarioStatus::STATUS_DONE) {
@@ -532,17 +581,25 @@ ScenarioConfig::ScenarioType ScenarioManager::SelectParkAndGoScenario(
       common::VehicleStateProvider::Instance()->vehicle_state();
   auto adc_point = common::util::MakePointENU(
       vehicle_state.x(), vehicle_state.y(), vehicle_state.z());
+  // TODO(SHU) might consider gear == GEAR_PARKING
+  double adc_speed =
+      common::VehicleStateProvider::Instance()->linear_velocity();
   double s = 0.0;
   double l = 0.0;
+  const double max_abs_speed_when_stopped =
+      common::VehicleConfigHelper::Instance()
+          ->GetConfig()
+          .vehicle_param()
+          .max_abs_speed_when_stopped();
+
   hdmap::LaneInfoConstPtr lane;
-  if (HDMapUtil::BaseMap().GetNearestLaneWithHeading(
-          adc_point, 2.0, vehicle_state.heading(), M_PI / 3.0, &lane, &s, &l) !=
-      0) {
+  // if vehicle is static and (off-lane or not on city_driving lane)
+  if (std::fabs(adc_speed) < max_abs_speed_when_stopped &&
+      (HDMapUtil::BaseMap().GetNearestLaneWithHeading(
+           adc_point, 2.0, vehicle_state.heading(), M_PI / 3.0, &lane, &s,
+           &l) != 0 ||
+       lane->lane().type() != hdmap::Lane::CITY_DRIVING)) {
     park_and_go = true;
-  } else {
-    if (lane->lane().type() != hdmap::Lane::CITY_DRIVING) {
-      park_and_go = true;
-    }
   }
 
   if (park_and_go) {
@@ -551,42 +608,6 @@ ScenarioConfig::ScenarioType ScenarioManager::SelectParkAndGoScenario(
 
   return default_scenario_type_;
 }
-
-/*
- * @brief: function called by ScenarioSelfVote(),
- *         which selects scenario based on vote from each individual scenario.
- *         not in use now. but please do NOT delete the code yet
- */
-/*
-bool ScenarioManager::ReuseCurrentScenario(
-   const common::TrajectoryPoint& ego_point, const Frame& frame) {
- return current_scenario_->IsTransferable(*current_scenario_, frame);
-}
-*/
-
-/*
- * @brief: function called by ScenarioSelfVote(),
- *         which selects scenario based on vote from each individual scenario.
- *         not in use now. but please do NOT delete the code yet
- */
-/*
-bool ScenarioManager::SelectScenario(
-    const ScenarioConfig::ScenarioType type,
-    const common::TrajectoryPoint& ego_point,
-    const Frame& frame) {
-  if (current_scenario_->scenario_type() == type) {
-    return true;
-  }
-
-  auto scenario = CreateScenario(type);
-  if (scenario->IsTransferable(*current_scenario_, frame)) {
-    AINFO << "switch to scenario: " << scenario->Name();
-    current_scenario_ = std::move(scenario);
-    return true;
-  }
-  return false;
-}
-*/
 
 void ScenarioManager::Observe(const Frame& frame) {
   // init first_encountered_overlap_map_
@@ -635,6 +656,7 @@ void ScenarioManager::ScenarioDispatch(const common::TrajectoryPoint& ego_point,
     case ScenarioConfig::TRAFFIC_LIGHT_UNPROTECTED_LEFT_TURN:
     case ScenarioConfig::TRAFFIC_LIGHT_UNPROTECTED_RIGHT_TURN:
     case ScenarioConfig::VALET_PARKING:
+    case ScenarioConfig::YIELD_SIGN:
       // must continue until finish
       if (current_scenario_->GetStatus() !=
           Scenario::ScenarioStatus::STATUS_DONE) {
@@ -691,9 +713,10 @@ void ScenarioManager::ScenarioDispatch(const common::TrajectoryPoint& ego_point,
           }
           break;
         case ReferenceLineInfo::YIELD_SIGN:
-          // TODO(all): to be added
-          // scenario_type = SelectYieldSignScenario(
-          //     frame, *traffic_sign_overlap);
+          if (FLAGS_enable_scenario_yield_sign) {
+            scenario_type =
+                SelectYieldSignScenario(frame, *traffic_sign_overlap);
+          }
           break;
         default:
           break;
@@ -727,11 +750,6 @@ void ScenarioManager::ScenarioDispatch(const common::TrajectoryPoint& ego_point,
     scenario_type = SelectValetParkingScenario(frame);
   }
 
-  // Check if it is supported by confs
-  if (supported_scenarios_.find(scenario_type) == supported_scenarios_.end()) {
-    scenario_type = default_scenario_type_;
-  }
-
   ADEBUG << "select scenario: "
          << ScenarioConfig::ScenarioType_Name(scenario_type);
 
@@ -742,115 +760,6 @@ void ScenarioManager::ScenarioDispatch(const common::TrajectoryPoint& ego_point,
     current_scenario_ = CreateScenario(scenario_type);
   }
 }
-
-/*
- * @brief: select scenario based on vote from each individual scenario
- *         not in use now. but please do NOT delete the code yet
- */
-/*
-void ScenarioManager::ScenarioSelfVote(const common::TrajectoryPoint& ego_point,
-                                       const Frame& frame) {
-  CHECK(!frame.reference_line_info().empty());
-
-  const auto& reference_line_info = frame.reference_line_info().front();
-
-  // change lane case, currently default to LANE_FOLLOW in change lane case.
-  // TODO(all) implement change lane scenario.
-  // SelectChangeLaneScenario(reference_line_info);
-
-  // non change lane case
-  std::set<ScenarioConfig::ScenarioType> rejected_scenarios;
-  if (current_scenario_->scenario_type() != default_scenario_type_ &&
-      ReuseCurrentScenario(ego_point, frame)) {
-    ADEBUG << "reuse current scenario: " << current_scenario_->Name();
-    return;
-  }
-  rejected_scenarios.insert(current_scenario_->scenario_type());
-
-  std::vector<ScenarioConfig::ScenarioType> preferred_scenarios;
-  preferred_scenarios.push_back(ScenarioConfig::LANE_FOLLOW);
-
-  const auto& first_overlaps = reference_line_info.FirstEncounteredOverlaps();
-  for (const auto& overlap : first_overlaps) {
-    // side_pass
-    if (overlap.first == ReferenceLineInfo::OBSTACLE) {
-      preferred_scenarios.push_back(ScenarioConfig::SIDE_PASS);
-    }
-
-    // stop_sign scenarios
-    if (overlap.first == ReferenceLineInfo::STOP_SIGN) {
-      preferred_scenarios.push_back(ScenarioConfig::STOP_SIGN_UNPROTECTED);
-    }
-
-    // traffic_light scenarios
-    if (overlap.first == ReferenceLineInfo::SIGNAL) {
-      preferred_scenarios.push_back(ScenarioConfig::TRAFFIC_LIGHT_PROTECTED);
-      preferred_scenarios.push_back(
-          ScenarioConfig::TRAFFIC_LIGHT_UNPROTECTED_LEFT_TURN);
-      preferred_scenarios.push_back(
-          ScenarioConfig::TRAFFIC_LIGHT_UNPROTECTED_RIGHT_TURN);
-    }
-  }
-
-  for (const auto& preferred_scenario : preferred_scenarios) {
-    if (rejected_scenarios.find(preferred_scenario) !=
-            rejected_scenarios.end() ||
-        supported_scenarios_.count(preferred_scenario) == 0) {
-      continue;
-    }
-    if (SelectScenario(preferred_scenario, ego_point, frame)) {
-      AINFO << "select preferred scenario: "
-            << ScenarioConfig::ScenarioType_Name(preferred_scenario);
-      return;
-    } else {
-      rejected_scenarios.insert(preferred_scenario);
-    }
-  }
-
-  // prefer to use first non-default transferrable scenario.
-  for (const auto scenario : supported_scenarios_) {
-    if (rejected_scenarios.find(scenario) != rejected_scenarios.end()) {
-      continue;
-    }
-    if (!FLAGS_enable_scenario_side_pass) {
-      if (scenario == ScenarioConfig::SIDE_PASS) {
-        continue;
-      }
-    }
-    if (!FLAGS_enable_scenario_stop_sign) {
-      if (scenario == ScenarioConfig::STOP_SIGN_UNPROTECTED) {
-        continue;
-      }
-    }
-    if (!FLAGS_enable_scenario_traffic_light) {
-      if (scenario == ScenarioConfig::TRAFFIC_LIGHT_PROTECTED) {
-        continue;
-      }
-      if (scenario == ScenarioConfig::TRAFFIC_LIGHT_UNPROTECTED_LEFT_TURN) {
-        continue;
-      }
-      if (scenario == ScenarioConfig::TRAFFIC_LIGHT_UNPROTECTED_RIGHT_TURN) {
-        continue;
-      }
-    }
-
-    if (SelectScenario(scenario, ego_point, frame)) {
-      AINFO << "select transferable scenario: "
-            << ScenarioConfig::ScenarioType_Name(scenario);
-      return;
-    } else {
-      rejected_scenarios.insert(scenario);
-    }
-  }
-
-  // finally use default transferrable scenario.
-  if (current_scenario_->scenario_type() != default_scenario_type_) {
-    AINFO << "select default scenario: "
-          << ScenarioConfig::ScenarioType_Name(default_scenario_type_);
-    current_scenario_ = CreateScenario(default_scenario_type_);
-  }
-}
-*/
 
 bool ScenarioManager::IsBareIntersectionScenario(
     const ScenarioConfig::ScenarioType& scenario_type) {
@@ -871,6 +780,11 @@ bool ScenarioManager::IsTrafficLightScenario(
       scenario_type == ScenarioConfig::TRAFFIC_LIGHT_UNPROTECTED_RIGHT_TURN);
 }
 
+bool ScenarioManager::IsYieldSignScenario(
+    const ScenarioConfig::ScenarioType& scenario_type) {
+  return (scenario_type == ScenarioConfig::YIELD_SIGN);
+}
+
 void ScenarioManager::UpdatePlanningContext(
     const Frame& frame, const ScenarioConfig::ScenarioType& scenario_type) {
   // BareIntersection scenario
@@ -884,6 +798,9 @@ void ScenarioManager::UpdatePlanningContext(
 
   // PullOver scenario
   UpdatePlanningContextPullOverScenario(frame, scenario_type);
+
+  // YieldSign scenario
+  UpdatePlanningContextYieldSignScenario(frame, scenario_type);
 }
 
 // update: bare_intersection status in PlanningContext
@@ -1007,6 +924,35 @@ void ScenarioManager::UpdatePlanningContextTrafficLightScenario(
              << traffic_light_overlap.object_id << "] start_s["
              << traffic_light_overlap.start_s << "]";
     }
+  }
+}
+
+// update: yield_sign status in PlanningContext
+void ScenarioManager::UpdatePlanningContextYieldSignScenario(
+    const Frame& frame, const ScenarioConfig::ScenarioType& scenario_type) {
+  if (!IsYieldSignScenario(scenario_type)) {
+    PlanningContext::Instance()
+        ->mutable_planning_status()
+        ->mutable_yield_sign()
+        ->Clear();
+    return;
+  }
+
+  if (scenario_type == current_scenario_->scenario_type()) {
+    return;
+  }
+
+  // set to first_encountered stop_sign
+  const auto map_itr =
+      first_encountered_overlap_map_.find(ReferenceLineInfo::YIELD_SIGN);
+  if (map_itr != first_encountered_overlap_map_.end()) {
+    PlanningContext::Instance()
+        ->mutable_planning_status()
+        ->mutable_yield_sign()
+        ->set_current_yield_sign_overlap_id(map_itr->second.object_id);
+    ADEBUG << "Update PlanningContext with first_encountered yield sign["
+           << map_itr->second.object_id << "] start_s["
+           << map_itr->second.start_s << "]";
   }
 }
 

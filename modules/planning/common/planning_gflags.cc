@@ -26,6 +26,10 @@ DEFINE_double(test_duration, -1.0,
 
 DEFINE_int32(planning_loop_rate, 10, "Loop rate for planning node");
 
+DEFINE_int32(history_max_record_num, 5,
+             "the number of planning history frame to keep");
+DEFINE_int32(max_frame_history_num, 1, "The maximum history frame number");
+
 // scenario related
 DEFINE_string(scenario_bare_intersection_unprotected_config_file,
               "/apollo/modules/planning/conf/"
@@ -67,6 +71,10 @@ DEFINE_string(scenario_valet_parking_config_file,
               "/apollo/modules/planning/conf/"
               "scenario/valet_parking_config.pb.txt",
               "valet_parking scenario config file");
+DEFINE_string(scenario_yield_sign_config_file,
+              "/apollo/modules/planning/conf/"
+              "scenario/yield_sign_config.pb.txt",
+              "yield_sign scenario config file");
 
 DEFINE_bool(enable_scenario_bare_intersection, false,
             "enable bare_intersection scenarios in planning");
@@ -89,6 +97,9 @@ DEFINE_bool(enable_scenario_stop_sign, true,
 
 DEFINE_bool(enable_scenario_traffic_light, true,
             "enable traffic_light scenarios in planning");
+
+DEFINE_bool(enable_scenario_yield_sign, true,
+            "enable yield_sign scenarios in planning");
 
 DEFINE_bool(enable_force_pull_over_open_space_parking_test, false,
             "enable force_pull_over_open_space_parking_test");
@@ -149,7 +160,6 @@ DEFINE_bool(enable_change_lane_decider, false,
             "True to use change lane state machine decider.");
 DEFINE_double(change_lane_speed_relax_percentage, 0.05,
               "The percentage of change lane speed relaxation.");
-DEFINE_int32(max_history_frame_num, 1, "The maximum history frame number");
 
 DEFINE_double(max_collision_distance, 0.1,
               "considered as collision if distance (meters) is smaller than or "
@@ -226,12 +236,15 @@ DEFINE_double(st_max_t, 8, "the maximum t of st boundary");
 DEFINE_bool(enable_nudge_decision, true, "enable nudge decision");
 DEFINE_bool(enable_nudge_slowdown, true,
             "True to slow down when nudge obstacles.");
-DEFINE_bool(enable_alwasy_stop_for_pedestrian, true,
+DEFINE_bool(enable_always_stop_for_pedestrian, true,
             "True to always STOP for pedestrian when path cross");
 
 DEFINE_bool(enable_side_radar, false,
             "If there is no radar on the side,ignore it");
-DEFINE_double(static_decision_nudge_l_buffer, 0.3, "l buffer for nudge");
+DEFINE_double(static_obstacle_nudge_l_buffer, 0.3,
+              "minimum l-distance to nudge a static obstacle (meters)");
+DEFINE_double(nonstatic_obstacle_nudge_l_buffer, 0.4,
+              "minimum l-distance to nudge a non-static obstacle (meters)");
 DEFINE_double(lateral_ignore_buffer, 3.0,
               "If an obstacle's lateral distance is further away than this "
               "distance, ignore it");
@@ -239,8 +252,6 @@ DEFINE_double(max_stop_distance_obstacle, 10.0,
               "max stop distance from in-lane obstacle (meters)");
 DEFINE_double(min_stop_distance_obstacle, 6.0,
               "min stop distance from in-lane obstacle (meters)");
-DEFINE_double(nudge_distance_obstacle, 0.3,
-              "minimum distance to nudge an obstacle (meters)");
 DEFINE_double(follow_min_distance, 3.0,
               "min follow distance for vehicles/bicycles/moving objects");
 DEFINE_double(follow_min_obs_lateral_distance, 2.5,
@@ -252,10 +263,11 @@ DEFINE_double(yield_distance_pedestrian_bycicle, 5.0,
               "min yield distance for pedestrians/bicycles");
 DEFINE_double(follow_time_buffer, 2.5,
               "time buffer in second to calculate the following distance.");
-DEFINE_double(follow_min_time_sec, 0.1,
-              "min follow time in st region before considering a valid follow");
+DEFINE_double(follow_min_time_sec, 2.0,
+              "min follow time in st region before considering a valid follow,"
+              " this is to differentiate a moving obstacle cross adc's"
+              " current lane and move to a different direction");
 DEFINE_double(stop_line_stop_distance, 1.0, "stop distance from stop line");
-DEFINE_double(max_stop_speed, 0.2, "max speed(m/s) to be considered as a stop");
 DEFINE_double(signal_light_min_pass_s_distance, 4.0,
               "min s_distance for adc to be considered "
               "have passed signal_light (stop_line_end_s)");

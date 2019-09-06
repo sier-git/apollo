@@ -132,16 +132,9 @@ std::vector<routing::LaneWaypoint> PncMap::FutureRouteWaypoints() const {
 
 void PncMap::UpdateRoutingRange(int adc_index) {
   // Track routing range.
-  if (range_start_ > adc_index || range_end_ < adc_index) {
-    range_lane_ids_.clear();
-    range_start_ = std::max(0, adc_index - 1);
-    range_end_ = range_start_;
-  }
-  while (range_start_ + 1 < adc_index) {
-    // TODO(Hongyi): Delete this when confirmed
-    // range_lane_ids_.erase(route_indices_[range_start_].segment.lane->id().id());
-    ++range_start_;
-  }
+  range_lane_ids_.clear();
+  range_start_ = std::max(0, adc_index - 1);
+  range_end_ = range_start_;
   while (range_end_ < static_cast<int>(route_indices_.size())) {
     const auto &lane_id = route_indices_[range_end_].segment.lane->id().id();
     if (range_lane_ids_.count(lane_id) != 0) {
@@ -501,11 +494,14 @@ bool PncMap::GetRouteSegments(const VehicleState &vehicle_state,
 bool PncMap::GetNearestPointFromRouting(const VehicleState &state,
                                         LaneWaypoint *waypoint) const {
   const double kMaxDistance = 10.0;  // meters.
+  const double kHeadingBuffer = M_PI / 10.0;
   waypoint->lane = nullptr;
   std::vector<LaneInfoConstPtr> lanes;
   auto point = common::util::MakePointENU(state.x(), state.y(), state.z());
-  const int status = hdmap_->GetLanesWithHeading(
-      point, kMaxDistance, state.heading(), M_PI / 2.0, &lanes);
+  const int status =
+      hdmap_->GetLanesWithHeading(point, kMaxDistance, state.heading(),
+                                  M_PI / 2.0 + kHeadingBuffer, &lanes);
+  ADEBUG << "lanes:" << lanes.size();
   if (status < 0) {
     AERROR << "Failed to get lane from point: " << point.ShortDebugString();
     return false;
@@ -527,7 +523,7 @@ bool PncMap::GetNearestPointFromRouting(const VehicleState &state,
                  });
   }
 
-  // Get nearest_wayponints for current position
+  // Get nearest_waypoints for current position
   double min_distance = std::numeric_limits<double>::infinity();
   for (const auto &lane : valid_lanes) {
     if (range_lane_ids_.count(lane->id().id()) == 0) {
@@ -537,6 +533,7 @@ bool PncMap::GetNearestPointFromRouting(const VehicleState &state,
       double s = 0.0;
       double l = 0.0;
       if (!lane->GetProjection({point.x(), point.y()}, &s, &l)) {
+        AERROR << "fail to get projection";
         return false;
       }
       // Use large epsilon to allow projection diff
@@ -560,6 +557,7 @@ bool PncMap::GetNearestPointFromRouting(const VehicleState &state,
       waypoint->lane = lane;
       waypoint->s = s;
     }
+    ADEBUG << "distance" << distance;
   }
   if (waypoint->lane == nullptr) {
     AERROR << "Failed to find nearest point: " << point.ShortDebugString();

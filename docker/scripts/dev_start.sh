@@ -16,13 +16,12 @@
 # limitations under the License.
 ###############################################################################
 
-INCHINA="no"
 LOCAL_IMAGE="no"
 FAST_BUILD_MODE="no"
 FAST_TEST_MODE="no"
 VERSION=""
 ARCH=$(uname -m)
-VERSION_X86_64="dev-x86_64-20190617_1100"
+VERSION_X86_64="dev-18.04-x86_64-20190822_1616"
 VERSION_AARCH64="dev-aarch64-20170927_1111"
 VERSION_OPT=""
 
@@ -57,7 +56,6 @@ function show_usage()
 cat <<EOF
 Usage: $(basename $0) [options] ...
 OPTIONS:
-    -C                     Pull docker image from China mirror.
     -b, --fast-build       Light mode for building without pulling all the map volumes
     -f, --fast-test        Light mode for testing without pulling limited set of map volumes
     -h, --help             Display this help and exit.
@@ -116,9 +114,6 @@ OTHER_VOLUME_CONF=""
 while [ $# -gt 0 ]
 do
     case "$1" in
-    -C|--docker-cn-mirror)
-        INCHINA="yes"
-        ;;
     -image)
         echo -e "\033[093mWarning\033[0m: This option has been replaced by \"-t\" and \"--tag\", please use the new one.\n"
         show_usage
@@ -182,16 +177,13 @@ if [ -z "${DOCKER_REPO}" ]; then
     DOCKER_REPO=apolloauto/apollo
 fi
 
-if [ "$INCHINA" == "yes" ]; then
-    DOCKER_REPO=registry.docker-cn.com/apolloauto/apollo
-fi
-
 if [ "$LOCAL_IMAGE" == "yes" ] && [ -z "$VERSION_OPT" ]; then
     VERSION="local_dev"
 fi
 
 
 IMG=${DOCKER_REPO}:$VERSION
+
 
 function local_volumes() {
     set +x
@@ -200,8 +192,15 @@ function local_volumes() {
              -v $HOME/.cache:${DOCKER_HOME}/.cache"
     case "$(uname -s)" in
         Linux)
-            volumes="${volumes} -v /dev:/dev \
-                                -v /media:/media \
+            case "$(lsb_release -r | cut -f2)" in
+                14.04)
+                    volumes="${volumes} "
+                    ;;
+                *)
+                    volumes="${volumes} -v /dev:/dev "
+                    ;;
+            esac
+            volumes="${volumes} -v /media:/media \
                                 -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
                                 -v /etc/localtime:/etc/localtime:ro \
                                 -v /usr/src:/usr/src \
@@ -213,8 +212,8 @@ function local_volumes() {
             ;;
     esac
     echo "${volumes}"
-    set -x
 }
+
 
 function main(){
 
@@ -268,7 +267,7 @@ function main(){
     PADDLE_VOLUME=apollo_paddlepaddle_volume_$USER
     docker stop ${PADDLE_VOLUME} > /dev/null 2>&1
 
-    PADDLE_VOLUME_IMAGE=${DOCKER_REPO}:paddlepaddle_volume-${ARCH}-latest
+    PADDLE_VOLUME_IMAGE=${DOCKER_REPO}:paddlepaddle_volume-${ARCH}-2.0.0
     docker pull ${PADDLE_VOLUME_IMAGE}
     docker run -it -d --rm --name ${PADDLE_VOLUME} ${PADDLE_VOLUME_IMAGE}
 

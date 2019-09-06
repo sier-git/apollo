@@ -64,6 +64,15 @@ hdmap::PathOverlap* GetOverlapOnReferenceLine(
         return const_cast<hdmap::PathOverlap*>(&pnc_junction_overlap);
       }
     }
+  } else if (overlap_type == ReferenceLineInfo::YIELD_SIGN) {
+    // yield_sign_overlap
+    const auto& yield_sign_overlaps =
+        reference_line_info.reference_line().map_path().yield_sign_overlaps();
+    for (const auto& yield_sign_overlap : yield_sign_overlaps) {
+      if (yield_sign_overlap.object_id == overlap_id) {
+        return const_cast<hdmap::PathOverlap*>(&yield_sign_overlap);
+      }
+    }
   }
 
   return nullptr;
@@ -99,7 +108,11 @@ PullOverStatus CheckADCPullOver(const ReferenceLineInfo& reference_line_info,
 
   const double adc_speed =
       common::VehicleStateProvider::Instance()->linear_velocity();
-  if (adc_speed > scenario_config.max_adc_stop_speed()) {
+  const double max_adc_stop_speed = common::VehicleConfigHelper::Instance()
+                                        ->GetConfig()
+                                        .vehicle_param()
+                                        .max_abs_speed_when_stopped();
+  if (adc_speed > max_adc_stop_speed) {
     ADEBUG << "ADC not stopped: speed[" << adc_speed << "]";
     return APPROACHING;
   }
@@ -193,6 +206,7 @@ bool CheckPullOverPositionBySL(const ReferenceLineInfo& reference_line_info,
   const double l_diff = std::fabs(target_sl.l() - adc_position_sl.l());
   const double theta_diff =
       std::fabs(common::math::NormalizeAngle(target_theta - adc_theta));
+
   ADEBUG << "adc_position_s[" << adc_position_sl.s() << "] adc_position_l["
          << adc_position_sl.l() << "] target_s[" << target_sl.s()
          << "] target_l[" << target_sl.l() << "] s_diff[" << s_diff
@@ -218,7 +232,6 @@ bool CheckPullOverPositionByDistance(
       std::fabs(common::math::NormalizeAngle(target_theta - adc_theta));
   ADEBUG << "distance_diff[" << distance_diff << "] theta_diff[" << theta_diff
          << "]";
-
   // check distance/theta diff
   return (distance_diff <= scenario_config.max_distance_error_to_end_point() &&
           theta_diff <= scenario_config.max_theta_error_to_end_point());
@@ -227,8 +240,8 @@ bool CheckPullOverPositionByDistance(
 ParkAndGoStatus CheckADCParkAndGoCruiseCompleted(
     const ReferenceLineInfo& reference_line_info,
     const ScenarioParkAndGoConfig& scenario_config) {
-  const double kLBuffer = 0.1;
-  const double kHeadingBuffer = 0.05;
+  const double kLBuffer = 0.5;
+  const double kHeadingBuffer = 0.1;
   // check if vehicle in reference line
   const auto& reference_line = reference_line_info.reference_line();
   // get vehicle s,l info
@@ -243,8 +256,12 @@ ParkAndGoStatus CheckADCParkAndGoCruiseCompleted(
   const auto reference_point =
       reference_line.GetReferencePoint(adc_position_sl.s());
   const auto path_point = reference_point.ToPathPoint(adc_position_sl.s());
-  if (std::fabs(adc_position_sl.l() < kLBuffer) &&
+  ADEBUG << "adc_position_sl.l():[" << adc_position_sl.l() << "]";
+  ADEBUG << "adc_heading - path_point.theta():[" << adc_heading << "]"
+         << "[" << path_point.theta() << "]";
+  if (std::fabs(adc_position_sl.l()) < kLBuffer &&
       std::fabs(adc_heading - path_point.theta()) < kHeadingBuffer) {
+    ADEBUG << "cruise completed";
     return CRUISE_COMPLETE;
   }
   return CRUISING;
@@ -259,11 +276,13 @@ bool CheckADCReadyToCruise(Frame* frame,
       common::VehicleStateProvider::Instance()->heading();
   const ReferenceLineInfo& reference_line_info =
       frame->reference_line_info().front();
-  bool no_near_front_obstacle = CheckADCSurroundObstacles(
-      adc_position, adc_heading, frame, scenario_config);
-  bool heading_align_w_reference_line = CheckADCHeading(
-      adc_position, adc_heading, reference_line_info, scenario_config);
-  if (no_near_front_obstacle && heading_align_w_reference_line) {
+  bool is_near_front_obstacle =
+      CheckADCSurroundObstacles(adc_position, adc_heading, frame,
+                                scenario_config.front_obstacle_buffer());
+  bool heading_align_w_reference_line =
+      CheckADCHeading(adc_position, adc_heading, reference_line_info,
+                      scenario_config.heading_buffer());
+  if (!is_near_front_obstacle && heading_align_w_reference_line) {
     return true;
   }
   return false;
@@ -275,17 +294,15 @@ bool CheckADCReadyToCruise(Frame* frame,
  */
 bool CheckADCSurroundObstacles(const common::math::Vec2d adc_position,
                                const double adc_heading, Frame* frame,
-                               const ScenarioParkAndGoConfig& scenario_config) {
-  // TODO(SHU): move to config
-  const double kFrontBuffer = 2.0;  // safe cruise distance
+                               const double front_obstacle_buffer) {
   const auto& vehicle_config =
       common::VehicleConfigHelper::Instance()->GetConfig();
   const double adc_length = vehicle_config.vehicle_param().length();
   const double adc_width = vehicle_config.vehicle_param().width();
   // ADC box
   Box2d adc_box(adc_position, adc_heading, adc_length, adc_width);
-  double shift_distance =
-      kFrontBuffer + vehicle_config.vehicle_param().back_edge_to_center();
+  double shift_distance = front_obstacle_buffer +
+                          vehicle_config.vehicle_param().back_edge_to_center();
   Vec2d shift_vec{shift_distance * std::cos(adc_heading),
                   shift_distance * std::sin(adc_heading)};
   adc_box.Shift(shift_vec);
@@ -308,9 +325,7 @@ bool CheckADCSurroundObstacles(const common::math::Vec2d adc_position,
 bool CheckADCHeading(const common::math::Vec2d adc_position,
                      const double adc_heading,
                      const ReferenceLineInfo& reference_line_info,
-                     const ScenarioParkAndGoConfig& scenario_config) {
-  // TODO(SHU): move to config
-  const double kThetaDiffToReferenceLine = 0.5;
+                     const double heading_diff_to_reference_line) {
   const auto& reference_line = reference_line_info.reference_line();
   common::SLPoint adc_position_sl;
   reference_line.XYToSL(adc_position, &adc_position_sl);
@@ -319,7 +334,7 @@ bool CheckADCHeading(const common::math::Vec2d adc_position,
       reference_line.GetReferencePoint(adc_position_sl.s());
   const auto path_point = reference_point.ToPathPoint(adc_position_sl.s());
   if (std::fabs(common::math::NormalizeAngle(
-          adc_heading - path_point.theta())) < kThetaDiffToReferenceLine) {
+          adc_heading - path_point.theta())) < heading_diff_to_reference_line) {
     return true;
   }
   return false;

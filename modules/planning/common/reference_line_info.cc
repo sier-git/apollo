@@ -369,7 +369,7 @@ Obstacle* ReferenceLineInfo::AddObstacle(const Obstacle* obstacle) {
   }
   mutable_obstacle->SetPerceptionSlBoundary(perception_sl);
   mutable_obstacle->CheckLaneBlocking(reference_line_);
-  if (obstacle->IsLaneBlocking()) {
+  if (mutable_obstacle->IsLaneBlocking()) {
     ADEBUG << "obstacle [" << obstacle->Id() << "] is lane blocking.";
   } else {
     ADEBUG << "obstacle [" << obstacle->Id() << "] is NOT lane blocking.";
@@ -869,6 +869,39 @@ int ReferenceLineInfo::GetPnCJunction(
     }
   }
   return 0;
+}
+
+void ReferenceLineInfo::SetBlockingObstacle(
+    const std::string& blocking_obstacle_id) {
+  blocking_obstacle_ = path_decision_.Find(blocking_obstacle_id);
+}
+
+std::vector<common::SLPoint> ReferenceLineInfo::GetAllStopDecisionSLPoint()
+    const {
+  std::vector<common::SLPoint> result;
+  for (const auto* obstacle : path_decision_.obstacles().Items()) {
+    const auto& object_decision = obstacle->LongitudinalDecision();
+    if (!object_decision.has_stop()) {
+      continue;
+    }
+    apollo::common::PointENU stop_point = object_decision.stop().stop_point();
+    common::SLPoint stop_line_sl;
+    reference_line_.XYToSL({stop_point.x(), stop_point.y()}, &stop_line_sl);
+    if (stop_line_sl.s() <= 0 || stop_line_sl.s() >= reference_line_.Length()) {
+      continue;
+    }
+    result.push_back(stop_line_sl);
+  }
+
+  // sort by s
+  if (!result.empty()) {
+    std::sort(result.begin(), result.end(),
+              [](const common::SLPoint& a, const common::SLPoint& b) {
+                return a.s() < b.s();
+              });
+  }
+
+  return result;
 }
 
 }  // namespace planning

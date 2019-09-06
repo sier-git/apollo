@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <limits>
 
+#include "modules/common/configs/vehicle_config_helper.h"
 #include "modules/planning/common/planning_gflags.h"
 #include "modules/planning/common/speed/st_point.h"
 
@@ -39,7 +40,7 @@ DpStCost::DpStCost(const DpStSpeedConfig& config, const double total_time,
   for (const auto& obstacle : obstacles) {
     boundary_map_[obstacle->path_st_boundary().id()] = index++;
   }
-  unit_t_ = total_time / config_.matrix_dimension_t();
+  unit_t_ = total_time / (config_.matrix_dimension_t() - 1);
 
   AddToKeepClearRange(obstacles);
 
@@ -164,15 +165,18 @@ double DpStCost::GetReferenceCost(const STPoint& point,
 }
 
 double DpStCost::GetSpeedCost(const STPoint& first, const STPoint& second,
-                              const double speed_limit,
-                              const double soft_speed_limit) const {
+                              const double speed_limit) const {
   double cost = 0.0;
   const double speed = (second.s() - first.s()) / unit_t_;
   if (speed < 0) {
     return kInf;
   }
 
-  if (speed < FLAGS_max_stop_speed && InKeepClearRange(second.s())) {
+  const double max_adc_stop_speed = common::VehicleConfigHelper::Instance()
+                                        ->GetConfig()
+                                        .vehicle_param()
+                                        .max_abs_speed_when_stopped();
+  if (speed < max_adc_stop_speed && InKeepClearRange(second.s())) {
     // first.s in range
     cost += config_.keep_clear_low_speed_penalty() * unit_t_ *
             config_.default_speed_cost();

@@ -66,6 +66,8 @@ cc_library(
     copts = ["-DMODULE_NAME=\\\"planning\\\""],
     deps = [
         "//modules/common",
+        "//modules/common/configs:vehicle_config_helper",
+        "//modules/common/vehicle_state:vehicle_state_provider",
         "//modules/planning/common:planning_common",
         "//modules/planning/common:planning_context",
         "//modules/planning/common/util:util_lib",
@@ -78,6 +80,7 @@ cc_library(
         "//modules/planning/scenarios/traffic_light/protected:traffic_light_protected_scenario",
         "//modules/planning/scenarios/traffic_light/unprotected_left_turn:traffic_light_unprotected_left_turn_scenario",
         "//modules/planning/scenarios/traffic_light/unprotected_right_turn:traffic_light_unprotected_right_turn_scenario",
+        "//modules/planning/scenarios/yield_sign:yield_sign_scenario",
     ],
 )
 
